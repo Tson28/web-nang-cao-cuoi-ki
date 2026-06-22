@@ -158,4 +158,8 @@ student-project-management/
 │   └── docker-compose.yml
 │
 ├── README.md
+<<<<<<< HEAD
 └── .gitignore
+=======
+└── .gitignore
+>>>>>>> 020feaadeb5fda7bb4ec5e750bd782f21febc221
