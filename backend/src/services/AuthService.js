@@ -1,12 +1,15 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { validateUserInput } = require('../validators');
+const { validateRegister, validateLogin, validateChangePassword } = require('../validators/authValidator');
 
 class AuthService {
+  /**
+   * Register new user
+   */
   static async register(userData) {
     try {
       // Validate input
-      const { isValid, errors } = validateUserInput(userData);
+      const { isValid, errors } = validateRegister(userData);
       if (!isValid) {
         throw {
           status: 400,
@@ -20,7 +23,8 @@ class AuthService {
       if (existingUser) {
         throw {
           status: 400,
-          message: 'User with this email already exists',
+          message: 'Email already registered',
+          errors: { email: 'This email is already in use' },
         };
       }
 
@@ -29,9 +33,8 @@ class AuthService {
         fullName: userData.fullName,
         email: userData.email,
         password: userData.password,
-        phone: userData.phone,
-        studentId: userData.studentId,
         role: userData.role || 'student',
+        avatar: userData.avatar || null,
       });
 
       await user.save();
@@ -45,6 +48,9 @@ class AuthService {
           fullName: user.fullName,
           email: user.email,
           role: user.role,
+          avatar: user.avatar,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
         },
         token,
       };
@@ -53,12 +59,18 @@ class AuthService {
     }
   }
 
+  /**
+   * Login user
+   */
   static async login(email, password) {
     try {
-      if (!email || !password) {
+      // Validate input
+      const { isValid, errors } = validateLogin({ email, password });
+      if (!isValid) {
         throw {
           status: 400,
-          message: 'Please provide email and password',
+          message: 'Validation failed',
+          errors,
         };
       }
 
@@ -72,6 +84,14 @@ class AuthService {
         };
       }
 
+      // Check if user is active
+      if (!user.isActive) {
+        throw {
+          status: 403,
+          message: 'User account is inactive',
+        };
+      }
+
       // Check password
       const isPasswordMatch = await user.comparePassword(password);
 
@@ -79,13 +99,6 @@ class AuthService {
         throw {
           status: 401,
           message: 'Invalid email or password',
-        };
-      }
-
-      if (!user.isActive) {
-        throw {
-          status: 403,
-          message: 'User account is inactive',
         };
       }
 
@@ -98,6 +111,9 @@ class AuthService {
           fullName: user.fullName,
           email: user.email,
           role: user.role,
+          avatar: user.avatar,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
         },
         token,
       };
@@ -106,7 +122,10 @@ class AuthService {
     }
   }
 
-  static async getUserById(userId) {
+  /**
+   * Get current user by ID
+   */
+  static async getCurrentUser(userId) {
     try {
       const user = await User.findById(userId);
 
@@ -117,18 +136,118 @@ class AuthService {
         };
       }
 
-      return user;
+      if (!user.isActive) {
+        throw {
+          status: 403,
+          message: 'User account is inactive',
+        };
+      }
+
+      return {
+        _id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
     } catch (error) {
       throw error;
     }
   }
 
+  /**
+   * Change password
+   */
+  static async changePassword(userId, currentPassword, newPassword) {
+    try {
+      // Validate input
+      const { isValid, errors } = validateChangePassword({
+        currentPassword,
+        newPassword,
+      });
+      if (!isValid) {
+        throw {
+          status: 400,
+          message: 'Validation failed',
+          errors,
+        };
+      }
+
+      // Find user with password field
+      const user = await User.findById(userId).select('+password');
+
+      if (!user) {
+        throw {
+          status: 404,
+          message: 'User not found',
+        };
+      }
+
+      // Verify current password
+      const isPasswordMatch = await user.comparePassword(currentPassword);
+
+      if (!isPasswordMatch) {
+        throw {
+          status: 401,
+          message: 'Current password is incorrect',
+        };
+      }
+
+      // Update password
+      user.password = newPassword;
+      await user.save();
+
+      return {
+        message: 'Password changed successfully',
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Generate JWT token
+   */
   static generateToken(userId, role) {
-    return jwt.sign(
-      { userId, role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRE || '7d' }
-    );
+    const payload = {
+      userId,
+      role,
+    };
+
+    return jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRE || '7d',
+    });
+  }
+
+  /**
+   * Verify JWT token
+   */
+  static verifyToken(token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      return decoded;
+    } catch (error) {
+      throw {
+        status: 401,
+        message: 'Invalid or expired token',
+      };
+    }
+  }
+
+  /**
+   * Refresh token
+   */
+  static refreshToken(token) {
+    try {
+      const decoded = this.verifyToken(token);
+      const newToken = this.generateToken(decoded.userId, decoded.role);
+      return newToken;
+    } catch (error) {
+      throw error;
+    }
   }
 }
 
